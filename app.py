@@ -10,7 +10,7 @@ import math
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="OSV Route Simulator", layout="wide")
-st.title("🚢 Offshore Supply Vessel Route Simulator")
+st.title("Offshore Supply Vessel Route Simulator")
 
 # -----------------------------
 # Config / Parameters
@@ -234,4 +234,5 @@ if start_btn:
         map_placeholder.write(st_folium(m, width=1100, height=650, returned_objects=[]))
 
         time.sleep(speed_ms / 1000)
+
 
