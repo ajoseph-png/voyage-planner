@@ -1,4 +1,8 @@
 streamlit
-pandas
 folium
 streamlit-folium
+geopandas
+shapely
+networkx
+geopy
+pandas
