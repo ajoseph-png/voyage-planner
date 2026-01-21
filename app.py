@@ -1,165 +1,158 @@
-# app_land_aware.py
+# app.py
 import streamlit as st
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
-import geopandas as gpd
-from shapely.geometry import Point, LineString
-import networkx as nx
-from geopy.distance import great_circle
+import math
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="OSV Land-Aware Route Planner", layout="wide")
-st.title("🚢 Offshore Supply Vessel - Land-Aware Route Planner")
+st.set_page_config(page_title="OSV Route Simulator", layout="wide")
+st.title("🚢 Offshore Supply Vessel Route Simulator")
 
 # -------------------------------
-# Load land polygons
+# Session State
 # -------------------------------
-@st.cache_data
-def load_land():
-    land = gpd.read_file("ne_50m_land.shp")
-    land = land.to_crs("EPSG:4326")
-    return land
+if "voyage_df" not in st.session_state:
+    st.session_state.voyage_df = None
 
-land = load_land()
+if "waypoints" not in st.session_state:
+    st.session_state.waypoints = []
+
+if "last_click" not in st.session_state:
+    st.session_state.last_click = None
+
+# -------------------------------
+# Helper Functions
+# -------------------------------
+def haversine_nm(lat1, lon1, lat2, lon2):
+    """Distance in nautical miles"""
+    R = 6371
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dl/2)**2
+    km = R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return km / 1.852
+
+def interpolate(start, end, steps=60):
+    return [
+        (
+            start[0] + (end[0] - start[0]) * i / (steps - 1),
+            start[1] + (end[1] - start[1]) * i / (steps - 1),
+        )
+        for i in range(steps)
+    ]
 
 # -------------------------------
 # Sidebar Inputs
 # -------------------------------
-st.sidebar.header("📍 Ports & Vessel")
+st.sidebar.header("📍 Ports")
 start_lat = st.sidebar.number_input("Start Port Latitude", value=18.938507)
 start_lon = st.sidebar.number_input("Start Port Longitude", value=72.851778)
-end_lat = st.sidebar.number_input("End Port Latitude", value=19.41667)
-end_lon = st.sidebar.number_input("End Port Longitude", value=71.33333)
-speed_knots = st.sidebar.number_input("Average Speed (knots)", min_value=0.1, value=10.0)
+end_lat = st.sidebar.number_input("End Port Latitude", value=18.938507)
+end_lon = st.sidebar.number_input("End Port Longitude", value=72.851778)
 
+st.sidebar.header("🧭 Vessel")
+speed_knots = st.sidebar.number_input(
+    "Average Speed (knots) – optional",
+    min_value=0.0,
+    value=10.0
+)
+
+# -------------------------------
+# Waypoints Input
+# -------------------------------
 st.sidebar.header("⚓ Waypoints")
-waypoints = []
+# Manual input
+with st.sidebar.expander("Add waypoint manually"):
+    wp_lat = st.number_input("Waypoint Latitude", value=0.0, step=0.0001)
+    wp_lon = st.number_input("Waypoint Longitude", value=0.0, step=0.0001)
+    if st.sidebar.button("➕ Add Waypoint"):
+        st.session_state.waypoints.append((wp_lat, wp_lon))
+
+# Display waypoints with remove button
+if st.session_state.waypoints:
+    st.sidebar.subheader("Current Waypoints")
+    for i, wp in enumerate(st.session_state.waypoints):
+        col1, col2 = st.sidebar.columns([4,1])
+        col1.write(f"{i+1}. {wp[0]:.5f}, {wp[1]:.5f}")
+        if col2.button("❌", key=f"remove_wp_{i}"):
+            st.session_state.waypoints.pop(i)
+            st.experimental_rerun()
+
+generate_btn = st.sidebar.button("🚀 Generate Voyage")
 
 # -------------------------------
-# Generate candidate grid points
+# Click-to-add waypoint map
 # -------------------------------
-def generate_water_grid(start, end, lat_step=0.05, lon_step=0.05):
-    min_lat = min(start[0], end[0]) - 0.5
-    max_lat = max(start[0], end[0]) + 0.5
-    min_lon = min(start[1], end[1]) - 0.5
-    max_lon = max(start[1], end[1]) + 0.5
+st.subheader("🗺️ Click on map to add waypoints")
+waypoint_map = folium.Map(location=[start_lat, start_lon], zoom_start=7)
+# Ports
+folium.Marker((start_lat, start_lon), tooltip="Start Port", icon=folium.Icon(color="blue", icon="anchor", prefix="fa")).add_to(waypoint_map)
+folium.Marker((end_lat, end_lon), tooltip="End Port", icon=folium.Icon(color="purple", icon="anchor", prefix="fa")).add_to(waypoint_map)
+# Existing waypoints
+for i, wp in enumerate(st.session_state.waypoints,1):
+    folium.Marker(wp, tooltip=f"Waypoint {i}", icon=folium.Icon(color="cadetblue", icon="flag", prefix="fa")).add_to(waypoint_map)
 
-    points = []
-    for lat in frange(min_lat, max_lat, lat_step):
-        for lon in frange(min_lon, max_lon, lon_step):
-            pt = Point(lat, lon)
-            if not any(pt.within(poly) for poly in land.geometry):
-                points.append(pt)
-    return points
+click_data = st_folium(waypoint_map, width=1100, height=550, key="waypoint_map")
 
-def frange(start, stop, step):
-    x = start
-    while x <= stop:
-        yield x
-        x += step
-
-# -------------------------------
-# Build graph avoiding land
-# -------------------------------
-def build_graph(points):
-    G = nx.Graph()
-    for i, p in enumerate(points):
-        G.add_node(i, point=p)
-    for i, p1 in enumerate(points):
-        for j, p2 in enumerate(points):
-            if i >= j:
-                continue
-            line = LineString([p1, p2])
-            if not any(line.intersects(poly) for poly in land.geometry):
-                dist = great_circle((p1.x, p1.y), (p2.x, p2.y)).nautical
-                G.add_edge(i, j, weight=dist)
-    return G
+# Add clicked waypoint
+if click_data and click_data.get("last_clicked"):
+    click = click_data["last_clicked"]
+    if st.session_state.last_click != click:
+        st.session_state.last_click = click
+        st.session_state.waypoints.append((click["lat"], click["lng"]))
+        st.experimental_rerun()
 
 # -------------------------------
-# Find nearest node
+# Generate voyage
 # -------------------------------
-def nearest_node(points, lat, lon):
-    min_dist = float("inf")
-    idx = 0
-    for i, p in enumerate(points):
-        d = great_circle((lat, lon), (p.x, p.y)).nautical
-        if d < min_dist:
-            min_dist = d
-            idx = i
-    return idx
+if generate_btn:
+    route = [(start_lat, start_lon)] + st.session_state.waypoints + [(end_lat, end_lon)]
+    total_nm = sum(haversine_nm(*a,*b) for a,b in zip(route[:-1], route[1:]))
+    speed = speed_knots if speed_knots>0 else 10
+    eta = datetime.utcnow() + timedelta(hours=total_nm/speed)
 
-# -------------------------------
-# Generate Route Button
-# -------------------------------
-if st.sidebar.button("🚀 Generate Optimal Route"):
-    start = (start_lat, start_lon)
-    end = (end_lat, end_lon)
-    st.info("Generating candidate water points...")
-    grid_points = generate_water_grid(start, end, 0.05, 0.05)
-
-    st.info("Building route graph avoiding land...")
-    G = build_graph(grid_points)
-
-    # Add start/end to graph
-    start_idx = len(grid_points)
-    end_idx = len(grid_points) + 1
-    G.add_node(start_idx, point=Point(start[0], start[1]))
-    G.add_node(end_idx, point=Point(end[0], end[1]))
-    # Connect start/end to nearest grid points
-    for i, p in enumerate(grid_points):
-        dist_start = great_circle(start, (p.x, p.y)).nautical
-        dist_end = great_circle(end, (p.x, p.y)).nautical
-        line_start = LineString([Point(start[0], start[1]), p])
-        line_end = LineString([p, Point(end[0], end[1])])
-        if not any(line_start.intersects(poly) for poly in land.geometry):
-            G.add_edge(start_idx, i, weight=dist_start)
-        if not any(line_end.intersects(poly) for poly in land.geometry):
-            G.add_edge(end_idx, i, weight=dist_end)
-
-    st.info("Finding optimal route...")
-    path = nx.shortest_path(G, source=start_idx, target=end_idx, weight="weight")
-    route_coords = [(G.nodes[i]['point'].x, G.nodes[i]['point'].y) for i in path]
-
-    # Calculate total distance and ETA
-    total_nm = sum(
-        great_circle(route_coords[i], route_coords[i+1]).nautical
-        for i in range(len(route_coords)-1)
-    )
-    eta = datetime.utcnow() + timedelta(hours=total_nm/speed_knots)
-
-    # Build DataFrame
     rows = []
     t = datetime.utcnow()
-    for a,b in zip(route_coords[:-1], route_coords[1:]):
-        steps = max(int(great_circle(a,b).nautical),1)
-        for lat, lon in interpolate(a,b,steps):
-            rows.append([t.isoformat()+"Z","OSV_SIM","Transit",lat,lon,speed_knots,"Underway"])
+    for a,b in zip(route[:-1], route[1:]):
+        for lat,lon in interpolate(a,b):
+            rows.append([t.isoformat()+"Z","OSV_SIM","Transit",round(lat,5),round(lon,5),speed,"Underway"])
             t += timedelta(minutes=1)
-
-    df_route = pd.DataFrame(
-        rows,
-        columns=["timestamp","vessel","phase","latitude","longitude","speed_knots","nav_status"]
+    
+    st.session_state.voyage_df = pd.DataFrame(
+        rows, columns=["timestamp","vessel","phase","latitude","longitude","speed_knots","nav_status"]
     )
+    st.session_state.metrics = {"distance":total_nm,"speed":speed,"eta":eta}
 
-    # -------------------------------
-    # Display metrics and map
-    # -------------------------------
+# -------------------------------
+# Output Section
+# -------------------------------
+if st.session_state.voyage_df is not None:
+    df = st.session_state.voyage_df
+    metrics = st.session_state.metrics
+
     col1,col2,col3 = st.columns(3)
-    col1.metric("Total Distance (NM)", f"{total_nm:.1f}")
-    col2.metric("Average Speed (kn)", f"{speed_knots}")
-    col3.metric("ETA (UTC)", eta.strftime("%Y-%m-%d %H:%M"))
+    col1.metric("Total Distance (NM)", f"{metrics['distance']:.1f}")
+    col2.metric("Avg Speed (kn)", f"{metrics['speed']}")
+    col3.metric("ETA (UTC)", metrics["eta"].strftime("%Y-%m-%d %H:%M"))
 
-    m = folium.Map(location=start, zoom_start=7)
-    folium.PolyLine(route_coords, color="blue", weight=3).add_to(m)
-    folium.Marker(start, tooltip="Start Port", icon=folium.Icon(color="blue", icon="anchor", prefix="fa")).add_to(m)
-    folium.Marker(end, tooltip="End Port", icon=folium.Icon(color="purple", icon="anchor", prefix="fa")).add_to(m)
+    # Voyage map
+    voyage_map = folium.Map(location=[start_lat, start_lon], zoom_start=7)
+    folium.PolyLine(list(zip(df.latitude, df.longitude)), color="blue", weight=3).add_to(voyage_map)
+    # Ports
+    folium.Marker((start_lat,start_lon), tooltip="Start Port", icon=folium.Icon(color="blue", icon="anchor", prefix="fa")).add_to(voyage_map)
+    folium.Marker((end_lat,end_lon), tooltip="End Port", icon=folium.Icon(color="purple", icon="anchor", prefix="fa")).add_to(voyage_map)
+    # Waypoints
+    for i, wp in enumerate(st.session_state.waypoints,1):
+        folium.Marker(wp, tooltip=f"Waypoint {i}", icon=folium.Icon(color="cadetblue", icon="flag", prefix="fa")).add_to(voyage_map)
 
-    st_folium(m, width=1100, height=600)
+    st_folium(voyage_map, width=1100, height=600, key="voyage_map_display")
 
+    # CSV download
     st.download_button(
         "⬇ Download Voyage CSV",
-        df_route.to_csv(index=False).encode("utf-8"),
-        "optimal_voyage.csv",
+        df.to_csv(index=False).encode("utf-8"),
+        "custom_voyage.csv",
         "text/csv"
     )
