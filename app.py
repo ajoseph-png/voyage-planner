@@ -53,10 +53,6 @@ start_lon = st.sidebar.number_input("Start Port Longitude", value=72.851778)
 end_lat = st.sidebar.number_input("End Port Latitude", value=18.938507)
 end_lon = st.sidebar.number_input("End Port Longitude", value=72.851778)
 
-st.sidebar.header("⚓ Rig Location")
-rig_lat = st.sidebar.number_input("Rig Latitude", value=19.41667)
-rig_lon = st.sidebar.number_input("Rig Longitude", value=71.33333)
-
 st.sidebar.header("🧭 Vessel")
 speed_knots = st.sidebar.number_input(
     "Average Speed (knots) – optional",
@@ -77,7 +73,7 @@ base_map = folium.Map(
     tiles="OpenStreetMap"
 )
 
-# Show ports and rig
+# Show ports
 folium.Marker(
     (start_lat, start_lon),
     tooltip="Start Port",
@@ -88,12 +84,6 @@ folium.Marker(
     (end_lat, end_lon),
     tooltip="End Port",
     icon=folium.Icon(color="purple", icon="anchor", prefix="fa")
-).add_to(base_map)
-
-folium.Marker(
-    (rig_lat, rig_lon),
-    tooltip="Rig",
-    icon=folium.Icon(color="orange", icon="industry", prefix="fa")
 ).add_to(base_map)
 
 # Existing waypoints
@@ -126,8 +116,6 @@ if generate_btn:
     route = (
         [(start_lat, start_lon)]
         + st.session_state.waypoints
-        + [(rig_lat, rig_lon)]
-        + st.session_state.waypoints[::-1]
         + [(end_lat, end_lon)]
     )
 
