@@ -6,8 +6,14 @@ from streamlit_folium import st_folium
 import math
 from datetime import datetime, timedelta
 
+if "voyage_df" not in st.session_state:
+    st.session_state.voyage_df = None
+
+if "metrics" not in st.session_state:
+    st.session_state.metrics = None
+
 st.set_page_config(page_title="OSV Voyage Planner", layout="wide")
-st.title("🚢 Offshore Supply Vessel Voyage Planner")
+st.title("Offshore Supply Vessel Voyage Planner")
 
 # -----------------------------
 # Utility functions
@@ -94,7 +100,7 @@ if generate_btn:
 
     total_km = 0
     for a, b in zip(route_points[:-1], route_points[1:]):
-        km, _ = haversine_nm(*a, *b)
+        km, nm = haversine_nm(*a, *b)
         total_km += km
 
     total_nm = total_km / 1.852
@@ -106,8 +112,7 @@ if generate_btn:
     timestamp = datetime.utcnow()
 
     for start, end in zip(route_points[:-1], route_points[1:]):
-        steps = 60
-        for lat, lon in interpolate(start, end, steps):
+        for lat, lon in interpolate(start, end, 60):
             rows.append([
                 timestamp.isoformat() + "Z",
                 "OSV_SIM",
@@ -119,12 +124,71 @@ if generate_btn:
             ])
             timestamp += timedelta(minutes=1)
 
-    df = pd.DataFrame(rows, columns=[
+    st.session_state.voyage_df = pd.DataFrame(rows, columns=[
         "timestamp","vessel","phase",
         "latitude","longitude","speed_knots","status"
     ])
 
-    st.success("Voyage generated successfully")
+    st.session_state.metrics = {
+        "nm": total_nm,
+        "speed": speed,
+        "eta": eta
+    }
+
+    map_placeholder = st.empty()
+
+if st.session_state.voyage_df is not None:
+    df = st.session_state.voyage_df
+    metrics = st.session_state.metrics
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Distance (NM)", f"{metrics['nm']:.1f}")
+    col2.metric("Avg Speed (kn)", f"{metrics['speed']}")
+    col3.metric("ETA (UTC)", metrics["eta"].strftime("%Y-%m-%d %H:%M"))
+
+    m = folium.Map(location=[start_lat, start_lon], zoom_start=7)
+
+    folium.PolyLine(
+        list(zip(df.latitude, df.longitude)),
+        color="blue",
+        weight=3
+    ).add_to(m)
+
+    folium.Marker(
+        (start_lat, start_lon),
+        tooltip="Start Port",
+        icon=folium.Icon(color="blue", icon="anchor")
+    ).add_to(m)
+
+    folium.Marker(
+        (end_lat, end_lon),
+        tooltip="End Port",
+        icon=folium.Icon(color="purple", icon="anchor")
+    ).add_to(m)
+
+    folium.Marker(
+        (rig_lat, rig_lon),
+        tooltip="Rig",
+        icon=folium.Icon(color="orange", icon="industry")
+    ).add_to(m)
+
+    for i, wp in enumerate(st.session_state.waypoints, 1):
+        folium.Marker(
+            wp,
+            tooltip=f"Waypoint {i}",
+            icon=folium.Icon(color="cadetblue", icon="flag")
+        ).add_to(m)
+
+    map_placeholder.write(st_folium(m, width=1100, height=600))
+
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "⬇ Download Voyage CSV",
+        csv,
+        "custom_voyage.csv",
+        "text/csv"
+    )
+
 
     # -----------------------------
     # Metrics
@@ -167,3 +231,4 @@ if generate_btn:
         "custom_voyage.csv",
         "text/csv"
     )
+
