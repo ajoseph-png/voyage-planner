@@ -6,6 +6,58 @@ from streamlit_folium import st_folium
 import math
 from datetime import datetime, timedelta
 
+map_placeholder = st.empty()
+
+if st.session_state.voyage_df is not None:
+    df = st.session_state.voyage_df
+    metrics = st.session_state.metrics
+
+    m = folium.Map(
+        location=[start_lat, start_lon],
+        zoom_start=7,
+        tiles="OpenStreetMap"
+    )
+
+    folium.PolyLine(
+        list(zip(df.latitude, df.longitude)),
+        color="blue",
+        weight=3
+    ).add_to(m)
+
+    folium.Marker(
+        (start_lat, start_lon),
+        tooltip="Start Port",
+        icon=folium.Icon(color="blue", icon="anchor", prefix="fa")
+    ).add_to(m)
+
+    folium.Marker(
+        (end_lat, end_lon),
+        tooltip="End Port",
+        icon=folium.Icon(color="purple", icon="anchor", prefix="fa")
+    ).add_to(m)
+
+    folium.Marker(
+        (rig_lat, rig_lon),
+        tooltip="Rig",
+        icon=folium.Icon(color="orange", icon="industry", prefix="fa")
+    ).add_to(m)
+
+    for i, wp in enumerate(st.session_state.waypoints, 1):
+        folium.Marker(
+            wp,
+            tooltip=f"Waypoint {i}",
+            icon=folium.Icon(color="cadetblue", icon="flag", prefix="fa")
+        ).add_to(m)
+
+    map_placeholder.write(
+        st_folium(
+            m,
+            width=1100,
+            height=600,
+            key="voyage_map"   # 🔑 REQUIRED
+        )
+    )
+
 if "voyage_df" not in st.session_state:
     st.session_state.voyage_df = None
 
@@ -219,7 +271,8 @@ if st.session_state.voyage_df is not None:
         folium.Marker(wp, tooltip=f"Waypoint {i}",
                       icon=folium.Icon(color="cadetblue", icon="flag")).add_to(m)
 
-    st_folium(m, width=1100, height=600)
+    st_folium(m, width=1100, height=600, key="voyage_map")
+
 
     # -----------------------------
     # CSV download
@@ -231,4 +284,5 @@ if st.session_state.voyage_df is not None:
         "custom_voyage.csv",
         "text/csv"
     )
+
 
