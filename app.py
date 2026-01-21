@@ -7,11 +7,11 @@ import math
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="OSV Route Simulator", layout="wide")
-st.title("🚢 Offshore Supply Vessel Route Simulator")
+st.title("Offshore Supply Vessel Route Simulator")
 
-# -------------------------------------------------
+# -------------------------------
 # Session State
-# -------------------------------------------------
+# -------------------------------
 if "voyage_df" not in st.session_state:
     st.session_state.voyage_df = None
 
@@ -21,19 +21,21 @@ if "waypoints" not in st.session_state:
 if "last_click" not in st.session_state:
     st.session_state.last_click = None
 
-# -------------------------------------------------
+# -------------------------------
 # Helper Functions
-# -------------------------------------------------
+# -------------------------------
 def haversine_nm(lat1, lon1, lat2, lon2):
+    """Calculate distance in nautical miles."""
     R = 6371
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dl = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dl / 2)**2
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1)*math.cos(phi2)*math.sin(dl / 2)**2
     km = R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return km / 1.852
 
 def interpolate(start, end, steps=60):
+    """Interpolate points between start and end."""
     return [
         (
             start[0] + (end[0] - start[0]) * i / (steps - 1),
@@ -42,14 +44,12 @@ def interpolate(start, end, steps=60):
         for i in range(steps)
     ]
 
-# -------------------------------------------------
+# -------------------------------
 # Sidebar Inputs
-# -------------------------------------------------
+# -------------------------------
 st.sidebar.header("📍 Ports")
-
 start_lat = st.sidebar.number_input("Start Port Latitude", value=18.938507)
 start_lon = st.sidebar.number_input("Start Port Longitude", value=72.851778)
-
 end_lat = st.sidebar.number_input("End Port Latitude", value=18.938507)
 end_lon = st.sidebar.number_input("End Port Longitude", value=72.851778)
 
@@ -60,11 +60,34 @@ speed_knots = st.sidebar.number_input(
     value=10.0
 )
 
+# -------------------------------
+# Waypoints Input Section
+# -------------------------------
+st.sidebar.header("⚓ Waypoints")
+
+# Manual input
+with st.sidebar.expander("Add waypoint manually"):
+    wp_lat = st.number_input("Waypoint Latitude", value=0.0, step=0.0001)
+    wp_lon = st.number_input("Waypoint Longitude", value=0.0, step=0.0001)
+    if st.button("➕ Add Waypoint"):
+        st.session_state.waypoints.append((wp_lat, wp_lon))
+
+# Show current waypoints with remove button
+if st.session_state.waypoints:
+    st.sidebar.subheader("Current Waypoints")
+    for i, wp in enumerate(st.session_state.waypoints):
+        col1, col2 = st.sidebar.columns([4,1])
+        col1.write(f"{i+1}. {wp[0]:.5f}, {wp[1]:.5f}")
+        if col2.button("❌", key=f"remove_wp_{i}"):
+            st.session_state.waypoints.pop(i)
+            st.experimental_rerun()
+
+# Generate voyage button
 generate_btn = st.sidebar.button("🚀 Generate Voyage")
 
-# -------------------------------------------------
-# CLICK-TO-ADD WAYPOINT MAP
-# -------------------------------------------------
+# -------------------------------
+# Map for click-to-add waypoints
+# -------------------------------
 st.subheader("🗺️ Click on map to add waypoints")
 
 base_map = folium.Map(
@@ -73,7 +96,7 @@ base_map = folium.Map(
     tiles="OpenStreetMap"
 )
 
-# Show ports
+# Ports
 folium.Marker(
     (start_lat, start_lon),
     tooltip="Start Port",
@@ -109,27 +132,20 @@ if map_data and map_data.get("last_clicked"):
         st.session_state.waypoints.append((click["lat"], click["lng"]))
         st.experimental_rerun()
 
-# -------------------------------------------------
+# -------------------------------
 # Generate Voyage
-# -------------------------------------------------
+# -------------------------------
 if generate_btn:
-    route = (
-        [(start_lat, start_lon)]
-        + st.session_state.waypoints
-        + [(end_lat, end_lon)]
-    )
+    route = [(start_lat, start_lon)] + st.session_state.waypoints + [(end_lat, end_lon)]
 
-    total_nm = sum(
-        haversine_nm(*a, *b)
-        for a, b in zip(route[:-1], route[1:])
-    )
+    total_nm = sum(haversine_nm(*a, *b) for a, b in zip(route[:-1], route[1:]))
 
     speed = speed_knots if speed_knots > 0 else 10
     eta = datetime.utcnow() + timedelta(hours=total_nm / speed)
 
+    # Build voyage DataFrame
     rows = []
     t = datetime.utcnow()
-
     for a, b in zip(route[:-1], route[1:]):
         for lat, lon in interpolate(a, b):
             rows.append([
@@ -162,9 +178,9 @@ if generate_btn:
         "eta": eta
     }
 
-# -------------------------------------------------
+# -------------------------------
 # Output Section
-# -------------------------------------------------
+# -------------------------------
 if st.session_state.voyage_df is not None:
     df = st.session_state.voyage_df
     metrics = st.session_state.metrics
@@ -175,12 +191,7 @@ if st.session_state.voyage_df is not None:
     col3.metric("ETA (UTC)", metrics["eta"].strftime("%Y-%m-%d %H:%M"))
 
     m = folium.Map(location=[start_lat, start_lon], zoom_start=7)
-
-    folium.PolyLine(
-        list(zip(df.latitude, df.longitude)),
-        color="blue",
-        weight=3
-    ).add_to(m)
+    folium.PolyLine(list(zip(df.latitude, df.longitude)), color="blue", weight=3).add_to(m)
 
     map_placeholder = st.empty()
     map_placeholder.write(
